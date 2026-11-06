@@ -1469,10 +1469,14 @@ Details:
 3. The course admin or instructor chooses to deactivate this student.
 4. The system alerts the course admin or instructor of the consequences of this deactivation defined in the Associated Information of this use case, warns about the deactivation, and asks for confirmation.
 5. The course admin or instructor confirms the deactivation.
-6. The system deactivates the student and alerts the course admin or instructor that this student has been deactivated.
+6. The system verifies that the actor is authorized to deactivate the student, deactivates the student, and alerts the course admin or instructor that this student has been deactivated.
 7. Use case ends.
 
 **Extensions:**
+5a. If the course admin or instructor cancels at the warning, the system makes no change and the use case ends.
+6a. If the selected student is already inactive, the system returns 409 Conflict, makes no change, and the use case ends.
+6b. If the selected student does not exist, the system returns 404 and the use case ends.
+6c. If the actor is neither a course admin nor an instructor assigned to the student's course section, the system denies the request with 403 per FR-SEC-deny-unauthorized and the use case ends.
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
 **Business Rules:** BR-student-lifecycle; BR-student-deactivation-effects
