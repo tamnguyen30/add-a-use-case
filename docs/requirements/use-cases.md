@@ -1476,7 +1476,7 @@ Details:
 5a. If the course admin or instructor cancels at the warning, the system makes no change and the use case ends.
 6a. If the selected student is already inactive, the system returns 409 Conflict, makes no change, and the use case ends.
 6b. If the selected student does not exist, the system returns 404 and the use case ends.
-6c. If the actor is neither a course admin nor an instructor assigned to the student's course section, the system denies the request with 403 per FR-SEC-deny-unauthorized and the use case ends.
+6c. If the actor is neither the course admin of the student's course nor an instructor assigned to her course section, the system denies the request with 403 per FR-SEC-deny-unauthorized and the use case ends.
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
 **Business Rules:** BR-student-lifecycle; BR-student-deactivation-effects
