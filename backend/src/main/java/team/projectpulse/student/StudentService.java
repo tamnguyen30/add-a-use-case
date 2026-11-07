@@ -1,5 +1,6 @@
 package team.projectpulse.student;
 
+import team.projectpulse.course.CourseSecurityService;
 import team.projectpulse.section.Section;
 import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.UserUtils;
@@ -11,6 +12,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -27,14 +29,18 @@ public class StudentService {
     private final UserInvitationService userInvitationService;
     private final PasswordEncoder passwordEncoder;
     private final UserUtils userUtils;
+    private final CourseSecurityService courseSecurityService;
+    private final StudentSecurityService studentSecurityService;
 
 
-    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils) {
+    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils, CourseSecurityService courseSecurityService, StudentSecurityService studentSecurityService) {
         this.studentRepository = studentRepository;
         this.sectionRepository = sectionRepository;
         this.userInvitationService = userInvitationService;
         this.passwordEncoder = passwordEncoder;
         this.userUtils = userUtils;
+        this.courseSecurityService = courseSecurityService;
+        this.studentSecurityService = studentSecurityService;
     }
 
     public Page<Student> findByCriteria(Map<String, String> searchCriteria, Pageable pageable) {
@@ -74,6 +80,26 @@ public class StudentService {
     public Student findStudentById(Integer studentId) {
         return this.studentRepository.findById(studentId)
                 .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+    }
+
+    public Student deactivateStudent(Integer studentId) {
+        Student student = this.studentRepository.findById(studentId)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+
+        Integer courseId = student.getSection().getCourse().getCourseId();
+        boolean isCourseAdmin = this.courseSecurityService.isCourseOwner(courseId);
+        boolean isAssignedInstructor = !isCourseAdmin
+                && this.studentSecurityService.isCurrentUserInstructorOfStudentSection(studentId);
+        if (!isCourseAdmin && !isAssignedInstructor) {
+            throw new AccessDeniedException("No permission.");
+        }
+
+        if (!student.isEnabled()) {
+            throw new StudentAlreadyInactiveException(studentId);
+        }
+
+        student.setEnabled(false);
+        return this.studentRepository.save(student);
     }
 
     public List<Student> findStudentsByTeamId(Integer teamId) {

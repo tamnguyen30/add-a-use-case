@@ -1,6 +1,8 @@
 package team.projectpulse.student;
 
 import tools.jackson.databind.json.JsonMapper;
+import team.projectpulse.instructor.Instructor;
+import team.projectpulse.instructor.InstructorRepository;
 import team.projectpulse.AbstractIntegrationTest;
 import team.projectpulse.system.StatusCode;
 import org.hamcrest.Matchers;
@@ -12,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
@@ -27,6 +30,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("Integration tests for Student API endpoints")
 class StudentIntegrationTest extends AbstractIntegrationTest {
@@ -39,6 +43,12 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     StudentRepository studentRepository;
+
+    @Autowired
+    InstructorRepository instructorRepository;
+
+    @Autowired
+    PasswordEncoder passwordEncoder;
 
     String adminToken;
 
@@ -152,16 +162,128 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void studentCannotCallDeactivationRouteButCourseAdminPassesItsRoleRule() throws Exception {
+    void studentCannotCallDeactivationRoute() throws Exception {
         this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
                         .accept(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void courseAdminAndAssignedInstructorCanDeactivateStudentsInTheirCourse() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.message").value("Student deactivated successfully"))
+                .andExpect(jsonPath("$.data.id").value(4))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+
+        Student john = this.studentRepository.findById(4).orElseThrow();
+        assertThat(john.isEnabled()).isFalse();
+        assertThat(john.getTeam().getTeamId()).isEqualTo(1);
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/5/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.data.id").value(5))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    void eligibleRoleReceivesNotFoundForMissingStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/404/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.NOT_FOUND));
+    }
+
+    @Test
+    void authorizedCallerReceivesConflictForAlreadyInactiveStudent() throws Exception {
+        Student student = this.studentRepository.findById(4).orElseThrow();
+        student.setEnabled(false);
+        this.studentRepository.saveAndFlush(student);
 
         this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
                         .accept(MediaType.APPLICATION_JSON)
                         .header(HttpHeaders.AUTHORIZATION, this.adminToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.CONFLICT));
+
+        assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isFalse();
+    }
+
+    @Test
+    void courseAdminFromAnotherCourseCannotDeactivateStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminTimToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void instructorOutsideStudentsSectionCannotDeactivateStudent() throws Exception {
+        Instructor outsideInstructor = new Instructor(
+                "outside.instructor@abc.edu",
+                "Outside",
+                "Instructor",
+                "outside.instructor@abc.edu",
+                this.passwordEncoder.encode("123456"),
+                true,
+                "instructor");
+        this.instructorRepository.saveAndFlush(outsideInstructor);
+
+        MvcResult loginResult = this.mockMvc.perform(post(this.baseUrl + "/users/login")
+                        .with(httpBasic("outside.instructor@abc.edu", "123456")))
+                .andReturn();
+        String outsideInstructorToken = "Bearer " + new JSONObject(loginResult.getResponse().getContentAsString())
+                .getJSONObject("data").getString("token");
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, outsideInstructorToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void historicalActivityAndPeerEvaluationReportsRemainVisibleAfterDeactivation() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(status().isOk());
+
+        Map<String, String> criteria = Map.of("studentId", "4", "week", "2023-W31");
+        MultiValueMap<String, String> requestParams = new LinkedMultiValueMap<>();
+        requestParams.add("page", "0");
+        requestParams.add("size", "10");
+        requestParams.add("sort", "category,asc");
+        this.mockMvc.perform(post(this.baseUrl + "/activities/search")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(criteria))
+                        .params(requestParams)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content", Matchers.hasSize(Matchers.greaterThan(0))))
+                .andExpect(jsonPath("$.data.content[0].studentId").value(4));
+
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W31")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[0].studentId").value(4));
     }
 
     @Test
