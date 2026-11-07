@@ -37,7 +37,11 @@ classDiagram
     }
     class StudentSecurityService {
         <<reused, student>>
-        +isCurrentUserInstructorOfStudentSection(student) boolean
+        +isCurrentUserInstructorOfStudentSection(studentId) boolean
+    }
+    class CourseSecurityService {
+        <<reused, course>>
+        +isCourseOwner(courseId) boolean
     }
     class StudentRepository {
         <<reused, student>>
@@ -83,6 +87,7 @@ classDiagram
     StudentController --> StudentService
     StudentService --> StudentRepository
     StudentService --> StudentSecurityService
+    StudentService --> CourseSecurityService
     StudentService ..> StudentAlreadyInactiveException
     StudentRepository --> Student
     Student --|> PeerEvaluationUser
@@ -93,7 +98,7 @@ classDiagram
 ```
 
 - **Frontend:** reuse [`Students.vue`](../../frontend/src/pages/students/Students.vue), [`EditStudentForm.vue`](../../frontend/src/pages/students/EditStudentForm.vue), and [`apis/student`](../../frontend/src/apis/student/index.ts). The deactivation action presents the warning and calls the new API only after confirmation; cancel makes no request. The generic edit path cannot transition an active account to inactive.
-- **Backend:** add a controller action and service operation in [`StudentController`](../../backend/src/main/java/team/projectpulse/student/StudentController.java) and [`StudentService`](../../backend/src/main/java/team/projectpulse/student/StudentService.java). Reuse [`StudentRepository`](../../backend/src/main/java/team/projectpulse/student/StudentRepository.java) and [`StudentSecurityService`](../../backend/src/main/java/team/projectpulse/student/StudentSecurityService.java); the service checks the instructor against the already-loaded student's course section.
+- **Backend:** add a controller action and service operation in [`StudentController`](../../backend/src/main/java/team/projectpulse/student/StudentController.java) and [`StudentService`](../../backend/src/main/java/team/projectpulse/student/StudentService.java). Reuse [`StudentRepository`](../../backend/src/main/java/team/projectpulse/student/StudentRepository.java), [`CourseSecurityService`](../../backend/src/main/java/team/projectpulse/course/CourseSecurityService.java) to verify course-admin ownership, and [`StudentSecurityService`](../../backend/src/main/java/team/projectpulse/student/StudentSecurityService.java) to verify instructor assignment.
 - **Authentication and status:** add `ActiveAccountJwtValidator` in `security/`, wired through [`SecurityConfiguration`](../../backend/src/main/java/team/projectpulse/security/SecurityConfiguration.java) and [`UserRepository`](../../backend/src/main/java/team/projectpulse/user/UserRepository.java). The existing [`MyUserPrincipal.isEnabled`](../../backend/src/main/java/team/projectpulse/user/MyUserPrincipal.java) check continues to reject disabled users at Basic login. Add a 409 mapping for `StudentAlreadyInactiveException` in [`ExceptionHandlerAdvice`](../../backend/src/main/java/team/projectpulse/system/exception/ExceptionHandlerAdvice.java).
 - **Peer evaluations:** add an inactive-evaluatee guard to [`EvaluationService`](../../backend/src/main/java/team/projectpulse/evaluation/EvaluationService.java). [`SubmissionStatusService`](../../backend/src/main/java/team/projectpulse/notification/SubmissionStatusService.java) already excludes inactive students from owed weekly activity report and peer-evaluation items.
 
@@ -108,6 +113,7 @@ sequenceDiagram
     participant SC as SecurityConfiguration
     participant C as StudentController
     participant S as StudentService
+    participant CS as CourseSecurityService
     participant SS as StudentSecurityService
     participant R as StudentRepository
     A->>UI: Choose student and deactivate (steps 1–3)
@@ -130,13 +136,15 @@ sequenceDiagram
                 S-->>UI: 404
             else student exists
                 R-->>S: Student
-                opt instructor caller
+                S->>CS: Check caller owns student's course
+                CS-->>S: Ownership result
+                opt caller is not course admin of student's course
                     S->>SS: Check instructor's course-section assignment
                     SS-->>S: Assignment result
                 end
-                alt instructor not assigned (6c)
+                alt neither course admin of student's course nor assigned instructor (6c)
                     S-->>UI: 403
-                else course admin or assigned instructor
+                else authorized for student's course
                     alt already inactive (6a)
                         S-->>UI: 409
                     else active
@@ -172,13 +180,13 @@ sequenceDiagram
 
 | Endpoint or job | Caller (who may) | Request | Success | Errors, by extension |
 |---|---|---|---|---|
-| `POST ${api.endpoint.base-url}/students/{studentId}/deactivate` (new) | Authenticated course admin, or instructor assigned to the student's course section | `studentId` path variable; no body | `200 Result` | `401` invalid/disabled caller; `403` unauthorized role or instructor scope (6c); `404` student absent (6b); `409` already inactive (6a) |
+| `POST ${api.endpoint.base-url}/students/{studentId}/deactivate` (new) | Authenticated course admin of the student's course, or instructor assigned to the student's course section | `studentId` path variable; no body | `200 Result` | `401` invalid/disabled caller; `403` unauthorized role, course-admin ownership, or instructor scope (6c); `404` student absent (6b); `409` already inactive (6a) |
 | `PUT ${api.endpoint.base-url}/students/{studentId}` (changed guard) | Existing route authorization; student updates own profile, instructor updates a student in scope | Existing student update payload | `200 Result`; `enabled=false → true` still supports reactivation | `400` for `enabled=true → false`; deactivation must use the dedicated route |
 
 ## Key decisions
 
 - **Dedicated command route:** use `POST …/deactivate` rather than the generic `PUT` as the deactivation path. The route makes confirmation, 409-on-repeat, and effects explicit. The generic update guard blocks only active-to-inactive; reactivation through that route remains supported.
-- **Two-stage authorization and 404:** the filter-chain rule admits only `ROLE_admin` and `ROLE_instructor`; after loading the student, the service verifies section assignment. A resource-aware manager that looks up the student before the controller would turn an unknown ID into 403, contrary to extension 6b. This honors the UC's 404; it does mean an instructor can distinguish a nonexistent ID (404) from an existing out-of-section student (403).
+- **Two-stage authorization and 404:** the filter-chain rule admits only `ROLE_admin` and `ROLE_instructor`; after loading the student, the service permits the course admin of that student's course or an instructor assigned to that course section. A resource-aware manager that looks up the student before the controller would turn an unknown ID into 403, contrary to extension 6b. This honors the UC's 404; it does mean an instructor can distinguish a nonexistent ID (404) from an existing out-of-section student (403).
 - **Immediate disabled-account enforcement:** validate account status during each JWT decode rather than waiting for token expiry or adding a revocation list. A cache was rejected because it could allow a deactivated student's next protected request.
 - **No lifecycle schema change:** reuse `PeerEvaluationUser.enabled`; do not add `deactivatedAt` or change team/report/evaluation relationships. Existing records remain available for their recorded weeks.
 - **Inactive evaluatee response (design choice):** reject a new evaluation targeting an inactive student using the existing invalid-evaluation 400 response. The business rule specifies rejection, not an HTTP status.
@@ -195,11 +203,12 @@ The route uses the shared `Result` envelope, `SecurityConfiguration`, and standa
 
 | Use case, flow | Level (unit / integration) | Asserts |
 |---|---|---|
-| UC-STU-deactivate-student, main success | Integration | Course admin and assigned instructor can deactivate an active student; response succeeds; `enabled` becomes false; team membership and prior weekly activity reports and peer evaluations remain. |
+| UC-STU-deactivate-student, main success | Integration | The course admin of the student's course and an instructor assigned to the student's course section can deactivate an active student; response succeeds; `enabled` becomes false; team membership and prior weekly activity reports and peer evaluations remain. |
 | UC-STU-deactivate-student, 5a cancel | Cypress E2E | Cancel the warning; no deactivate request is sent and the account remains active. Assert the step-4 warning states the BR consequences: team membership and submitted work remain; no new evaluation may target her; reports retain her for active weeks; her next protected request is denied. |
 | UC-STU-deactivate-student, 6a already inactive | Service + integration | An authorized caller receives 409 / `StatusCode.CONFLICT`; no further mutation occurs. |
 | UC-STU-deactivate-student, 6b not found | Integration | An eligible-role caller receives 404 / `StatusCode.NOT_FOUND`, not 403. |
 | UC-STU-deactivate-student, 6c unauthorized | Integration | A student caller is refused by the route rule and an instructor outside the student's course section by the service; both receive 403 and no state changes. |
+| UC-STU-deactivate-student, 6c admin from another course | Integration | A course admin who does not own the student's course receives 403 and the student's account remains active. |
 | UC-STU-deactivate-student, logged-in student next protected request | Validator unit + integration | Reuse a student JWT issued before deactivation to attempt a protected weekly activity report submission; receive 401 and persist no report. A fresh Basic login also returns 401. Validator tests ensure a status-lookup failure cannot authenticate the request. `FR-SEC-active-account` requires denying both authentication and access but specifies no HTTP status; 401 follows existing account-status and invalid-bearer handling. |
 | Deactivation rule, new evaluation about inactive student | Service + integration | Submission is rejected with the existing 400 invalid-evaluation response (**design choice**; the rule specifies rejection, not a status); no evaluation row is created. |
 | Deactivation rule, historical report visibility | Integration | Existing activity and peer-evaluation data remains visible in reports for weeks she was active. |
@@ -211,5 +220,5 @@ The 5a E2E case fits the existing Cypress setup: use `cy.login` and stub the stu
 
 - The per-request account lookup makes each bearer-authenticated request depend on the user store; do not cache the status unless the design changes the immediate-denial requirement.
 - If the account-status lookup fails, fail closed rather than authorizing the request. The FR requires denial but does not prescribe an HTTP status for an infrastructure failure.
-- Extension 6b's explicit 404 creates the existence distinction described above for an instructor caller. Returning a uniform 403 would require changing the accepted UC behavior.
+- Extension 6b's explicit 404 creates the existence distinction described above for an instructor or an out-of-scope course admin. Returning a uniform 403 would require changing the accepted UC behavior.
 - The reactivation operation remains on the existing generic update path; a dedicated reactivation route is outside this use case's design.
