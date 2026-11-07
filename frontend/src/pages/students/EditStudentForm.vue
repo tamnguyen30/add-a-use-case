@@ -16,6 +16,7 @@
     <el-form-item label="Status:" prop="enabled">
       <el-switch
         v-model="studentBeingEdited.enabled"
+        :disabled="studentBeingEdited.enabled"
         inline-prompt
         active-text="Enabled"
         inactive-text="Disabled"
@@ -34,21 +35,57 @@
     <el-form-item label="Team:" prop="teamName">
       <el-input v-model="studentBeingEdited.teamName" disabled></el-input>
     </el-form-item>
-    <div style="display: flex; justify-content: end">
-      <el-button @click="$emit('close-dialog')"> Cancel </el-button>
-      <el-button type="primary" @click="updateExistingStudent()"> Confirm </el-button>
+    <div style="display: flex; justify-content: space-between">
+      <el-button
+        v-if="studentBeingEdited.enabled"
+        data-cy="student-deactivate-open"
+        type="danger"
+        @click="deactivationWarningVisible = true"
+      >
+        Deactivate
+      </el-button>
+      <div style="display: flex; justify-content: end">
+        <el-button @click="$emit('close-dialog')"> Cancel </el-button>
+        <el-button type="primary" @click="updateExistingStudent()"> Confirm </el-button>
+      </div>
     </div>
   </el-form>
+  <el-dialog
+    v-model="deactivationWarningVisible"
+    title="Deactivate student?"
+    width="500px"
+    data-cy="student-deactivation-warning"
+  >
+    <p data-cy="student-deactivation-consequences">
+      The student's next protected request will be denied, and they will no longer be able to submit
+      weekly activity reports or peer evaluations. Their team membership and previously submitted
+      work will remain. New peer evaluations cannot target this student, and reports will continue
+      to include them for active weeks. The account can be reactivated later.
+    </p>
+    <template #footer>
+      <el-button data-cy="student-deactivate-cancel" @click="deactivationWarningVisible = false">
+        Cancel
+      </el-button>
+      <el-button
+        data-cy="student-deactivate-confirm"
+        type="danger"
+        :loading="deactivationLoading"
+        @click="confirmDeactivation"
+      >
+        Confirm deactivation
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import type { Student } from '@/apis/student/types'
 import type { FormInstance } from 'element-plus'
-import { findStudentById, updateStudent } from '@/apis/student'
+import { deactivateStudent, findStudentById, updateStudent } from '@/apis/student'
 import { ref, onMounted } from 'vue'
 
-const { studentId } = defineProps(['studentId'])
+const { studentId } = defineProps<{ studentId: number }>()
 const emit = defineEmits(['close-dialog'])
 
 // Note that the structure of the userData is NOT the same as the User interface since the roles are stored as an array
@@ -63,6 +100,8 @@ const studentBeingEdited = ref<Student>({
 })
 
 const studentForm = ref<FormInstance>() // Form reference
+const deactivationWarningVisible = ref(false)
+const deactivationLoading = ref(false)
 
 // Validation rules
 const rules = {
@@ -103,6 +142,23 @@ async function loadStudent(studentId: number) {
 onMounted(() => {
   loadStudent(studentId) // Load the artifact to be edited
 })
+
+async function confirmDeactivation() {
+  const id = studentBeingEdited.value.id
+  if (id === undefined) {
+    throw new Error('Student ID is required for deactivation.')
+  }
+
+  deactivationLoading.value = true
+  try {
+    await deactivateStudent(id)
+  } finally {
+    deactivationLoading.value = false
+  }
+
+  ElMessage.success('Student deactivated successfully')
+  emit('close-dialog')
+}
 
 async function updateExistingStudent() {
   await studentForm.value!.validate() // Validate the form
