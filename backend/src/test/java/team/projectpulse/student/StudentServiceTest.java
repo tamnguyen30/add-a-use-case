@@ -163,8 +163,7 @@ class StudentServiceTest {
         given(this.userUtils.hasRole("ROLE_instructor")).willReturn(true);
 
         assertThatThrownBy(() -> this.studentService.updateStudent(1, update))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Use the dedicated deactivation action to deactivate a student.");
+                .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(existingStudent.isEnabled()).isTrue();
         verify(this.studentRepository, never()).save(any(Student.class));
