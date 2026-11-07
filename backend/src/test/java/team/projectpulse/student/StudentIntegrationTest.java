@@ -26,6 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DisplayName("Integration tests for Student API endpoints")
 class StudentIntegrationTest extends AbstractIntegrationTest {
@@ -35,6 +36,9 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JsonMapper jsonMapper;
+
+    @Autowired
+    StudentRepository studentRepository;
 
     String adminToken;
 
@@ -145,6 +149,35 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN))
                 .andExpect(jsonPath("$.message").value("No permission."))
                 .andExpect(jsonPath("$.data").value("Access Denied"));
+    }
+
+    @Test
+    void studentCannotCallDeactivationRouteButCourseAdminPassesItsRoleRule() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(status().isForbidden());
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void previouslyIssuedStudentJwtAndFreshLoginAreRejectedAfterDeactivation() throws Exception {
+        Student student = this.studentRepository.findById(4).orElseThrow();
+        student.setEnabled(false);
+        this.studentRepository.saveAndFlush(student);
+
+        this.mockMvc.perform(get(this.baseUrl + "/students/4")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(status().isUnauthorized());
+
+        this.mockMvc.perform(post(this.baseUrl + "/users/login")
+                        .with(httpBasic("j.smith@abc.edu", "123456")))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
