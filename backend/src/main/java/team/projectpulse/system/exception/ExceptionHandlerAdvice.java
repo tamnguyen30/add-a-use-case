@@ -5,6 +5,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import team.projectpulse.student.StudentAlreadyInactiveException;
 import team.projectpulse.system.Result;
 import team.projectpulse.system.StatusCode;
 import org.springframework.http.HttpStatus;
@@ -41,6 +42,12 @@ public class ExceptionHandlerAdvice {
     @ResponseStatus(HttpStatus.NOT_FOUND)
     Result handleObjectNotFoundException(ObjectNotFoundException ex) {
         return new Result(false, StatusCode.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(StudentAlreadyInactiveException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    Result handleStudentAlreadyInactiveException(StudentAlreadyInactiveException ex) {
+        return new Result(false, StatusCode.CONFLICT, ex.getMessage());
     }
 
     /**

@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -313,6 +314,23 @@ class EvaluationServiceTest {
         // Then
         assertThat(savedPeerEvaluation).isEqualTo(newPeerEvaluation);
         verify(this.evaluationRepository, times(1)).save(newPeerEvaluation);
+    }
+
+    @Test
+    void testAddPeerEvaluationForInactiveEvaluatee() {
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.eric.setEnabled(false);
+
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+
+        assertThatThrownBy(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation))
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("You cannot evaluate an inactive student.");
+
+        verify(this.evaluationRepository, never()).save(any(PeerEvaluation.class));
     }
 
     @Test

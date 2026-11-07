@@ -42,6 +42,7 @@
       <el-table-column label="Operations" width="120">
         <template #default="{ row }">
           <el-button
+            data-cy="student-edit"
             icon="Edit"
             circle
             plain
@@ -69,6 +70,7 @@
     <!-- Dialog for editing student -->
     <el-dialog v-model="dialogVisible" title="Edit a student" width="30%" destroy-on-close>
       <EditStudentForm
+        v-if="studentBeingEditedId !== undefined"
         :studentId="studentBeingEditedId"
         @close-dialog="closeDialog"
       ></EditStudentForm>
