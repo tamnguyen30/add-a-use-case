@@ -1,6 +1,7 @@
 package team.projectpulse.student;
 
 import tools.jackson.databind.json.JsonMapper;
+import team.projectpulse.activity.ActivityRepository;
 import team.projectpulse.instructor.Instructor;
 import team.projectpulse.instructor.InstructorRepository;
 import team.projectpulse.AbstractIntegrationTest;
@@ -43,6 +44,9 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     StudentRepository studentRepository;
+
+    @Autowired
+    ActivityRepository activityRepository;
 
     @Autowired
     InstructorRepository instructorRepository;
@@ -291,6 +295,25 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         Student student = this.studentRepository.findById(4).orElseThrow();
         student.setEnabled(false);
         this.studentRepository.saveAndFlush(student);
+
+        Map<String, Object> activityDto = new HashMap<>();
+        activityDto.put("week", "2023-W31");
+        activityDto.put("category", "DEVELOPMENT");
+        activityDto.put("activity", "Submit after deactivation");
+        activityDto.put("description", "This report must not be persisted.");
+        activityDto.put("plannedHours", 1.0);
+        activityDto.put("actualHours", 1.0);
+        activityDto.put("status", "COMPLETED");
+        long activityCount = this.activityRepository.count();
+
+        this.mockMvc.perform(post(this.baseUrl + "/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(activityDto))
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(status().isUnauthorized());
+
+        assertThat(this.activityRepository.count()).isEqualTo(activityCount);
 
         this.mockMvc.perform(get(this.baseUrl + "/students/4")
                         .accept(MediaType.APPLICATION_JSON)
