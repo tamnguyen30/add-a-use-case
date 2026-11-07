@@ -200,7 +200,7 @@ The route uses the shared `Result` envelope, `SecurityConfiguration`, and standa
 | UC-STU-deactivate-student, 6a already inactive | Service + integration | An authorized caller receives 409 / `StatusCode.CONFLICT`; no further mutation occurs. |
 | UC-STU-deactivate-student, 6b not found | Integration | An eligible-role caller receives 404 / `StatusCode.NOT_FOUND`, not 403. |
 | UC-STU-deactivate-student, 6c unauthorized | Integration | A student caller is refused by the route rule and an instructor outside the student's course section by the service; both receive 403 and no state changes. |
-| UC-STU-deactivate-student, logged-in student next protected request | Integration | Reuse a student JWT issued before deactivation to attempt a protected weekly activity report submission; receive 401 and persist no report. A fresh Basic login also returns 401. `FR-SEC-active-account` requires denying both authentication and access but specifies no HTTP status; 401 follows existing account-status and invalid-bearer handling. |
+| UC-STU-deactivate-student, logged-in student next protected request | Validator unit + integration | Reuse a student JWT issued before deactivation to attempt a protected weekly activity report submission; receive 401 and persist no report. A fresh Basic login also returns 401. Validator tests ensure a status-lookup failure cannot authenticate the request. `FR-SEC-active-account` requires denying both authentication and access but specifies no HTTP status; 401 follows existing account-status and invalid-bearer handling. |
 | Deactivation rule, new evaluation about inactive student | Service + integration | Submission is rejected with the existing 400 invalid-evaluation response (**design choice**; the rule specifies rejection, not a status); no evaluation row is created. |
 | Deactivation rule, historical report visibility | Integration | Existing activity and peer-evaluation data remains visible in reports for weeks she was active. |
 | Generic update lifecycle guard / reactivation | Integration | `PUT` active-to-inactive returns 400 with no mutation; `PUT` inactive-to-active still succeeds for reactivation. |
@@ -210,5 +210,6 @@ The 5a E2E case fits the existing Cypress setup: use `cy.login` and stub the stu
 ## Open questions / risks
 
 - The per-request account lookup makes each bearer-authenticated request depend on the user store; do not cache the status unless the design changes the immediate-denial requirement.
+- If the account-status lookup fails, fail closed rather than authorizing the request. The FR requires denial but does not prescribe an HTTP status for an infrastructure failure.
 - Extension 6b's explicit 404 creates the existence distinction described above for an instructor caller. Returning a uniform 403 would require changing the accepted UC behavior.
 - The reactivation operation remains on the existing generic update path; a dedicated reactivation route is outside this use case's design.
